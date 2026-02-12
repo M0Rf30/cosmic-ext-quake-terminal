@@ -1,0 +1,37 @@
+[package]
+name = "cosmic-ext-quake-terminal"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Quake-style dropdown terminal for COSMIC Desktop"
+repository = "https://github.com/m0rf30/cosmic-ext-quake-terminal"
+keywords = ["cosmic", "terminal", "quake", "dropdown", "wayland"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic", package = "cosmic-config" }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols" }
+futures = "0.3"
+i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10"
+libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+    "dbus-config",
+    "multi-window",
+    "tokio",
+    "winit",
+    "wayland",
+    "single-instance",
+] }
+nix = { version = "0.29", features = ["signal", "process", "poll"] }
+once_cell = "1"
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+smithay-client-toolkit = "0.20"
+tokio = { version = "1", features = ["sync", "rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-journald = "0.3"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
