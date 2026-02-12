@@ -3,7 +3,9 @@ use std::sync::mpsc as std_mpsc;
 
 use cosmic_client_toolkit::toplevel_info::{ToplevelInfoHandler, ToplevelInfoState};
 use cosmic_client_toolkit::toplevel_management::{ToplevelManagerHandler, ToplevelManagerState};
-use cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::{self, ZcosmicToplevelHandleV1};
+use cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::{
+    self, ZcosmicToplevelHandleV1,
+};
 use cosmic_protocols::toplevel_management::v1::client::zcosmic_toplevel_manager_v1;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
@@ -154,8 +156,9 @@ impl ToplevelInfoHandler for WaylandState {
         if let Some(info) = self.toplevel_info.info(toplevel) {
             self.our_handle = info.cosmic_toplevel.clone();
 
-            let is_minimized =
-                info.state.contains(&zcosmic_toplevel_handle_v1::State::Minimized);
+            let is_minimized = info
+                .state
+                .contains(&zcosmic_toplevel_handle_v1::State::Minimized);
 
             // Only emit events on actual state changes
             if self.last_minimized != Some(is_minimized) {
@@ -206,9 +209,7 @@ impl ToplevelManagerHandler for WaylandState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _capabilities: Vec<
-            WEnum<
-                zcosmic_toplevel_manager_v1::ZcosmicToplelevelManagementCapabilitiesV1,
-            >,
+            WEnum<zcosmic_toplevel_manager_v1::ZcosmicToplelevelManagementCapabilitiesV1>,
         >,
     ) {
     }
@@ -305,43 +306,36 @@ fn handle_command_inner(state: &WaylandState, cmd: WaylandCommand) {
     }
 }
 
-pub fn toplevel_subscription(
-    target_app_id: String,
-) -> cosmic::iced::Subscription<ToplevelEvent> {
+pub fn toplevel_subscription(target_app_id: String) -> cosmic::iced::Subscription<ToplevelEvent> {
     struct ToplevelSub;
 
     cosmic::iced::Subscription::run_with_id(
         std::any::TypeId::of::<ToplevelSub>(),
-        futures::stream::unfold(
-            ToplevelSubState::Init(target_app_id),
-            |state| async move {
-                match state {
-                    ToplevelSubState::Init(target_app_id) => {
-                        let (event_tx, event_rx) = tokio_mpsc::unbounded_channel();
-                        let (cmd_tx, cmd_rx) = std_mpsc::channel();
+        futures::stream::unfold(ToplevelSubState::Init(target_app_id), |state| async move {
+            match state {
+                ToplevelSubState::Init(target_app_id) => {
+                    let (event_tx, event_rx) = tokio_mpsc::unbounded_channel();
+                    let (cmd_tx, cmd_rx) = std_mpsc::channel();
 
-                        let controller = WaylandController { cmd_tx };
+                    let controller = WaylandController { cmd_tx };
 
-                        std::thread::spawn(move || {
-                            if let Err(e) =
-                                run_wayland_loop(target_app_id, event_tx, cmd_rx)
-                            {
-                                tracing::error!("Wayland toplevel loop error: {e}");
-                            }
-                        });
+                    std::thread::spawn(move || {
+                        if let Err(e) = run_wayland_loop(target_app_id, event_tx, cmd_rx) {
+                            tracing::error!("Wayland toplevel loop error: {e}");
+                        }
+                    });
 
-                        Some((
-                            ToplevelEvent::Ready(controller),
-                            ToplevelSubState::Running(event_rx),
-                        ))
-                    }
-                    ToplevelSubState::Running(mut rx) => {
-                        let event = rx.recv().await?;
-                        Some((event, ToplevelSubState::Running(rx)))
-                    }
+                    Some((
+                        ToplevelEvent::Ready(controller),
+                        ToplevelSubState::Running(event_rx),
+                    ))
                 }
-            },
-        ),
+                ToplevelSubState::Running(mut rx) => {
+                    let event = rx.recv().await?;
+                    Some((event, ToplevelSubState::Running(rx)))
+                }
+            }
+        }),
     )
 }
 

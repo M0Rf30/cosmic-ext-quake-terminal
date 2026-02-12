@@ -152,35 +152,31 @@ impl Application for QuakeTerminal {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        let mut subs = vec![
-            wayland::toplevel_subscription(self.terminal_app_id.clone())
-                .map(Message::ToplevelEvent),
-        ];
+        let mut subs = vec![wayland::toplevel_subscription(self.terminal_app_id.clone())
+            .map(Message::ToplevelEvent)];
 
         // Monitor terminal process exit via kill(pid, 0)
         if let Some(ref pid_holder) = self.terminal_pid {
             let pid_holder = pid_holder.clone();
-            subs.push(
-                cosmic::iced::Subscription::run_with_id(
-                    "process-monitor",
-                    futures::stream::unfold(pid_holder, |pid_holder| async move {
-                        loop {
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                            let pid = pid_holder.load(Ordering::Relaxed);
-                            if pid != 0 {
-                                let alive = nix::sys::signal::kill(
-                                    nix::unistd::Pid::from_raw(pid as i32),
-                                    None,
-                                )
-                                .is_ok();
-                                if !alive {
-                                    return Some((Message::TerminalExited, pid_holder));
-                                }
+            subs.push(cosmic::iced::Subscription::run_with_id(
+                "process-monitor",
+                futures::stream::unfold(pid_holder, |pid_holder| async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        let pid = pid_holder.load(Ordering::Relaxed);
+                        if pid != 0 {
+                            let alive = nix::sys::signal::kill(
+                                nix::unistd::Pid::from_raw(pid as i32),
+                                None,
+                            )
+                            .is_ok();
+                            if !alive {
+                                return Some((Message::TerminalExited, pid_holder));
                             }
                         }
-                    }),
-                ),
-            );
+                    }
+                }),
+            ));
         }
 
         // Watch for config changes
@@ -203,10 +199,7 @@ impl Application for QuakeTerminal {
         Subscription::batch(subs)
     }
 
-    fn dbus_activation(
-        &mut self,
-        msg: cosmic::dbus_activation::Message,
-    ) -> Task<Self::Message> {
+    fn dbus_activation(&mut self, msg: cosmic::dbus_activation::Message) -> Task<Self::Message> {
         use cosmic::dbus_activation::Details;
 
         match msg.msg {

@@ -16,7 +16,14 @@ pub enum Position {
     Bottom,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, cosmic_config::cosmic_config_derive::CosmicConfigEntry)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    cosmic_config::cosmic_config_derive::CosmicConfigEntry,
+)]
 #[version = 1]
 pub struct QuakeConfig {
     pub terminal_command: String,

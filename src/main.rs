@@ -29,9 +29,7 @@ fn init_logging() {
 
     let fmt_layer = fmt::layer().with_target(true);
 
-    let registry = tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer);
+    let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
 
     if let Ok(journald) = tracing_journald::layer() {
         registry.with(journald).init();
