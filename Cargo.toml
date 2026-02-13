@@ -10,13 +10,13 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols" }
-cosmic-config = { git = "https://github.com/pop-os/libcosmic", package = "cosmic-config" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols" }
+cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols", rev = "d0e95be" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic", rev = "689f25b", package = "cosmic-config" }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", rev = "d0e95be" }
 futures = "0.3"
 i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
 i18n-embed-fl = "0.10"
-libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+libcosmic = { git = "https://github.com/pop-os/libcosmic", rev = "689f25b", default-features = false, features = [
     "dbus-config",
     "multi-window",
     "tokio",
