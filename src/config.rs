@@ -16,6 +16,15 @@ pub enum Position {
     Bottom,
 }
 
+impl std::fmt::Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Position::Top => write!(f, "Top"),
+            Position::Bottom => write!(f, "Bottom"),
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,

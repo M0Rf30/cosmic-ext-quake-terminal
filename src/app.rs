@@ -4,14 +4,28 @@ use std::sync::Arc;
 use clap::Parser;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
+use cosmic::iced::event::{self, Event};
+use cosmic::iced::window;
 use cosmic::iced::Subscription;
-use cosmic::widget::text;
-use cosmic::{Application, Element};
+use cosmic::widget::{self, header_bar, scrollable, settings, slider, text, text_input};
+use cosmic::{Application, ApplicationExt, Element};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{QuakeConfig, CONFIG_VERSION};
+use crate::config::{Position, QuakeConfig, CONFIG_VERSION};
+use crate::fl;
 use crate::process;
 use crate::wayland::{self, ToplevelEvent, WaylandController};
+
+const KNOWN_TERMINALS: &[&str] = &[
+    "cosmic-term",
+    "alacritty",
+    "kitty",
+    "foot",
+    "wezterm",
+    "ghostty",
+];
+
+const POSITION_OPTIONS: &[Position] = &[Position::Top, Position::Bottom];
 
 const APP_ID: &str = "com.github.m0rf30.CosmicExtQuakeTerminal";
 
@@ -27,12 +41,15 @@ pub struct Args {
 pub enum QuakeAction {
     /// Toggle the quake terminal visibility
     Toggle,
+    /// Open the settings window
+    Settings,
 }
 
 impl std::fmt::Display for QuakeAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             QuakeAction::Toggle => write!(f, "Toggle"),
+            QuakeAction::Settings => write!(f, "Settings"),
         }
     }
 }
@@ -43,6 +60,7 @@ impl std::str::FromStr for QuakeAction {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Toggle" => Ok(QuakeAction::Toggle),
+            "Settings" => Ok(QuakeAction::Settings),
             other => Err(format!("Unknown action: {other}")),
         }
     }
@@ -71,6 +89,15 @@ pub enum Message {
     ToplevelEvent(ToplevelEvent),
     TerminalExited,
     ConfigChanged(QuakeConfig),
+    OpenSettings,
+    WindowOpened(window::Id),
+    WindowClosed(window::Id),
+    CloseWindow(window::Id),
+    SetTerminalCommand(usize),
+    SetTerminalArgs(String),
+    SetPosition(usize),
+    SetHeightPercent(u32),
+    SetWidthPercent(u32),
 }
 
 pub struct QuakeTerminal {
@@ -81,6 +108,9 @@ pub struct QuakeTerminal {
     terminal_pid: Option<Arc<AtomicU32>>,
     terminal_app_id: String,
     wayland_controller: Option<WaylandController>,
+    settings_window_id: Option<window::Id>,
+    terminal_names: Vec<String>,
+    position_names: Vec<String>,
 }
 
 impl Application for QuakeTerminal {
@@ -90,7 +120,7 @@ impl Application for QuakeTerminal {
 
     const APP_ID: &'static str = APP_ID;
 
-    fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         let config_handler = cosmic_config::Config::new(APP_ID, CONFIG_VERSION).ok();
         let config = config_handler
             .as_ref()
@@ -100,6 +130,9 @@ impl Application for QuakeTerminal {
         // Pre-compute the app_id for the configured terminal
         let terminal_app_id = process::get_app_id(&config.terminal_command);
 
+        let terminal_names = KNOWN_TERMINALS.iter().map(|s| (*s).to_string()).collect();
+        let position_names = POSITION_OPTIONS.iter().map(ToString::to_string).collect();
+
         let app = Self {
             core,
             config,
@@ -108,9 +141,19 @@ impl Application for QuakeTerminal {
             terminal_pid: None,
             terminal_app_id,
             wayland_controller: None,
+            settings_window_id: None,
+            terminal_names,
+            position_names,
         };
 
-        (app, Task::none())
+        // Dispatch the initial action from CLI flags (first-instance case)
+        let task = match flags.subcommand {
+            Some(QuakeAction::Settings) => cosmic::task::message(Message::OpenSettings),
+            Some(QuakeAction::Toggle) => cosmic::task::message(Message::Toggle),
+            None => Task::none(),
+        };
+
+        (app, task)
     }
 
     fn core(&self) -> &Core {
@@ -126,8 +169,11 @@ impl Application for QuakeTerminal {
             Message::Toggle => self.handle_toggle(),
             Message::ToplevelEvent(event) => self.handle_toplevel_event(event),
             Message::TerminalExited => {
-                tracing::info!("Terminal process exited");
-                // Reap the zombie process
+                // Only reap the zombie process — do NOT reset state.
+                // Many terminals fork (parent exits, child keeps running),
+                // so PID death does not mean the window is gone.
+                // State is driven by ToplevelEvent::Closed instead.
+                tracing::info!("Terminal process exited (reaping zombie)");
                 if let Some(pid) = self.terminal_pid.take() {
                     let raw = pid.load(Ordering::Relaxed) as i32;
                     let _ = nix::sys::wait::waitpid(
@@ -135,12 +181,72 @@ impl Application for QuakeTerminal {
                         Some(nix::sys::wait::WaitPidFlag::WNOHANG),
                     );
                 }
-                self.state = ToggleState::Idle;
             }
             Message::ConfigChanged(config) => {
                 tracing::info!("Config changed");
                 self.terminal_app_id = process::get_app_id(&config.terminal_command);
                 self.config = config;
+            }
+            Message::OpenSettings => {
+                if self.settings_window_id.is_some() {
+                    return Task::none();
+                }
+                let settings = window::Settings {
+                    size: cosmic::iced::Size::new(500.0, 450.0),
+                    resizable: true,
+                    decorations: false,
+                    ..window::Settings::default()
+                };
+                let (id, task) = window::open(settings);
+                self.settings_window_id = Some(id);
+                let title = fl!("settings-title");
+                return task.discard().chain(self.set_window_title(title, id));
+            }
+            Message::WindowOpened(_id) => {}
+            Message::CloseWindow(id) => {
+                if self.settings_window_id == Some(id) {
+                    self.settings_window_id = None;
+                    return window::close(id);
+                }
+            }
+            Message::WindowClosed(id) => {
+                if self.settings_window_id == Some(id) {
+                    self.settings_window_id = None;
+                }
+            }
+            Message::SetTerminalCommand(index) => {
+                if let Some(&terminal) = KNOWN_TERMINALS.get(index) {
+                    if let Some(ref handler) = self.config_handler {
+                        let _ = self.config.set_terminal_command(handler, terminal.into());
+                    }
+                }
+            }
+            Message::SetTerminalArgs(args_str) => {
+                let args: Vec<String> = if args_str.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    args_str.split_whitespace().map(String::from).collect()
+                };
+                if let Some(ref handler) = self.config_handler {
+                    let _ = self.config.set_terminal_args(handler, args);
+                }
+            }
+            Message::SetPosition(index) => {
+                if let Some(position) = POSITION_OPTIONS.get(index) {
+                    if let Some(ref handler) = self.config_handler {
+                        let _ = self.config.set_position(handler, position.clone());
+                    }
+                }
+            }
+            Message::SetHeightPercent(value) => {
+                if let Some(ref handler) = self.config_handler {
+                    let _ = self.config.set_height_percent(handler, value);
+                }
+            }
+            Message::SetWidthPercent(value) => {
+                if let Some(ref handler) = self.config_handler {
+                    let _ = self.config.set_width_percent(handler, value);
+                }
             }
         }
         Task::none()
@@ -149,6 +255,70 @@ impl Application for QuakeTerminal {
     fn view(&self) -> Element<'_, Self::Message> {
         // Daemon mode - no main window
         text("").into()
+    }
+
+    fn view_window(&self, id: window::Id) -> Element<'_, Self::Message> {
+        if self.settings_window_id != Some(id) {
+            return text("").into();
+        }
+
+        let terminal_index = self.terminal_index();
+
+        let terminal_section = settings::section()
+            .title(fl!("settings-terminal"))
+            .add(settings::item(
+                fl!("terminal-command"),
+                widget::dropdown(&self.terminal_names, Some(terminal_index), |i| {
+                    Message::SetTerminalCommand(i)
+                }),
+            ))
+            .add(settings::item(
+                fl!("terminal-args"),
+                text_input(
+                    fl!("terminal-args-placeholder"),
+                    self.config.terminal_args.join(" "),
+                )
+                .on_input(Message::SetTerminalArgs),
+            ));
+
+        let position_index = self.position_index();
+
+        let appearance_section = settings::section()
+            .title(fl!("settings-appearance"))
+            .add(settings::item(
+                fl!("position"),
+                widget::dropdown(&self.position_names, Some(position_index), |i| {
+                    Message::SetPosition(i)
+                }),
+            ))
+            .add(settings::item(
+                fl!("height-percent", value = self.config.height_percent),
+                slider(
+                    10..=100,
+                    self.config.height_percent,
+                    Message::SetHeightPercent,
+                ),
+            ))
+            .add(settings::item(
+                fl!("width-percent", value = self.config.width_percent),
+                slider(
+                    10..=100,
+                    self.config.width_percent,
+                    Message::SetWidthPercent,
+                ),
+            ));
+
+        let content =
+            settings::view_column(vec![terminal_section.into(), appearance_section.into()]);
+
+        let header = header_bar()
+            .title(fl!("settings-title"))
+            .on_close(Message::CloseWindow(id));
+
+        widget::column()
+            .push(header)
+            .push(scrollable(content))
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
@@ -196,6 +366,14 @@ impl Application for QuakeTerminal {
             );
         }
 
+        // Watch for window events (settings window open/close)
+        subs.push(event::listen_with(|event, _status, id| match event {
+            Event::Window(window::Event::CloseRequested) => Some(Message::CloseWindow(id)),
+            Event::Window(window::Event::Opened { .. }) => Some(Message::WindowOpened(id)),
+            Event::Window(window::Event::Closed) => Some(Message::WindowClosed(id)),
+            _ => None,
+        }));
+
         Subscription::batch(subs)
     }
 
@@ -212,6 +390,9 @@ impl Application for QuakeTerminal {
                         QuakeAction::Toggle => {
                             return cosmic::task::message(Message::Toggle);
                         }
+                        QuakeAction::Settings => {
+                            return cosmic::task::message(Message::OpenSettings);
+                        }
                     }
                 }
             }
@@ -222,6 +403,20 @@ impl Application for QuakeTerminal {
 }
 
 impl QuakeTerminal {
+    fn terminal_index(&self) -> usize {
+        KNOWN_TERMINALS
+            .iter()
+            .position(|&t| t == self.config.terminal_command)
+            .unwrap_or(0)
+    }
+
+    fn position_index(&self) -> usize {
+        POSITION_OPTIONS
+            .iter()
+            .position(|p| *p == self.config.position)
+            .unwrap_or(0)
+    }
+
     fn handle_toggle(&mut self) {
         match self.state {
             ToggleState::Idle => {

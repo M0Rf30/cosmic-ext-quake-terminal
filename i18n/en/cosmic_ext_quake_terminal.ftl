@@ -1,1 +1,10 @@
 app-title = COSMIC Quake Terminal
+settings-title = Quake Terminal Settings
+settings-terminal = Terminal
+terminal-command = Terminal emulator
+terminal-args = Extra arguments
+terminal-args-placeholder = e.g. --option value
+settings-appearance = Appearance
+position = Position
+height-percent = Height ({$value}%)
+width-percent = Width ({$value}%)
