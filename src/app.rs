@@ -6,27 +6,27 @@ use cosmic::app::{Core, Settings, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::event::{self, Event};
 use cosmic::iced::window;
+use cosmic::iced::Alignment;
 use cosmic::iced::Length;
 use cosmic::iced::Subscription;
-use cosmic::widget::{self, container, header_bar, scrollable, settings, slider, text, text_input};
+use cosmic::widget::{self, container, header_bar, scrollable, settings, text, text_input};
 use cosmic::{Application, ApplicationExt, Element};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Position, QuakeConfig, CONFIG_VERSION};
+use crate::config::{QuakeConfig, CONFIG_VERSION};
 use crate::fl;
 use crate::process;
 use crate::wayland::{self, ToplevelEvent, WaylandController};
 
-const KNOWN_TERMINALS: &[&str] = &[
-    "cosmic-term",
-    "alacritty",
-    "kitty",
-    "foot",
-    "wezterm",
-    "ghostty",
+/// (command, display_name, icon_name)
+const KNOWN_TERMINALS: &[(&str, &str, &str)] = &[
+    ("cosmic-term", "cosmic-terminal", "com.system76.CosmicTerm"),
+    ("alacritty", "alacritty", "Alacritty"),
+    ("kitty", "kitty", "kitty"),
+    ("foot", "foot", "foot"),
+    ("wezterm", "wezterm", "org.wezfurlong.wezterm"),
+    ("ghostty", "ghostty", "com.mitchellh.ghostty"),
 ];
-
-const POSITION_OPTIONS: &[Position] = &[Position::Top, Position::Bottom];
 
 const APP_ID: &str = "com.github.m0rf30.CosmicExtQuakeTerminal";
 
@@ -96,9 +96,6 @@ pub enum Message {
     CloseWindow(window::Id),
     SetTerminalCommand(usize),
     SetTerminalArgs(String),
-    SetPosition(usize),
-    SetHeightPercent(u32),
-    SetWidthPercent(u32),
 }
 
 pub struct QuakeTerminal {
@@ -110,8 +107,6 @@ pub struct QuakeTerminal {
     terminal_app_id: String,
     wayland_controller: Option<WaylandController>,
     settings_window_id: Option<window::Id>,
-    terminal_names: Vec<String>,
-    position_names: Vec<String>,
 }
 
 impl Application for QuakeTerminal {
@@ -131,9 +126,6 @@ impl Application for QuakeTerminal {
         // Pre-compute the app_id for the configured terminal
         let terminal_app_id = process::get_app_id(&config.terminal_command);
 
-        let terminal_names = KNOWN_TERMINALS.iter().map(|s| (*s).to_string()).collect();
-        let position_names = POSITION_OPTIONS.iter().map(ToString::to_string).collect();
-
         let app = Self {
             core,
             config,
@@ -143,8 +135,6 @@ impl Application for QuakeTerminal {
             terminal_app_id,
             wayland_controller: None,
             settings_window_id: None,
-            terminal_names,
-            position_names,
         };
 
         // Dispatch the initial action from CLI flags (first-instance case)
@@ -216,9 +206,9 @@ impl Application for QuakeTerminal {
                 }
             }
             Message::SetTerminalCommand(index) => {
-                if let Some(&terminal) = KNOWN_TERMINALS.get(index) {
+                if let Some(&(command, _, _)) = KNOWN_TERMINALS.get(index) {
                     if let Some(ref handler) = self.config_handler {
-                        let _ = self.config.set_terminal_command(handler, terminal.into());
+                        let _ = self.config.set_terminal_command(handler, command.into());
                     }
                 }
             }
@@ -230,23 +220,6 @@ impl Application for QuakeTerminal {
                 };
                 if let Some(ref handler) = self.config_handler {
                     let _ = self.config.set_terminal_args(handler, args);
-                }
-            }
-            Message::SetPosition(index) => {
-                if let Some(position) = POSITION_OPTIONS.get(index) {
-                    if let Some(ref handler) = self.config_handler {
-                        let _ = self.config.set_position(handler, position.clone());
-                    }
-                }
-            }
-            Message::SetHeightPercent(value) => {
-                if let Some(ref handler) = self.config_handler {
-                    let _ = self.config.set_height_percent(handler, value);
-                }
-            }
-            Message::SetWidthPercent(value) => {
-                if let Some(ref handler) = self.config_handler {
-                    let _ = self.config.set_width_percent(handler, value);
                 }
             }
         }
@@ -265,53 +238,32 @@ impl Application for QuakeTerminal {
 
         let terminal_index = self.terminal_index();
 
-        let terminal_section = settings::section()
-            .title(fl!("settings-terminal"))
-            .add(settings::item(
-                fl!("terminal-command"),
-                widget::dropdown(&self.terminal_names, Some(terminal_index), |i| {
-                    Message::SetTerminalCommand(i)
-                }),
-            ))
-            .add(settings::item(
-                fl!("terminal-args"),
-                text_input(
-                    fl!("terminal-args-placeholder"),
-                    self.config.terminal_args.join(" "),
-                )
-                .on_input(Message::SetTerminalArgs),
+        let mut terminal_section = settings::section().title(fl!("settings-terminal"));
+
+        for (i, &(_, display_name, icon_name)) in KNOWN_TERMINALS.iter().enumerate() {
+            let icon = widget::icon::from_name(icon_name).size(24).prefer_svg(true);
+            let label = widget::row::with_children(vec![icon.into(), text(display_name).into()])
+                .spacing(12)
+                .align_y(Alignment::Center);
+
+            terminal_section = terminal_section.add(widget::radio(
+                label,
+                i,
+                Some(terminal_index),
+                Message::SetTerminalCommand,
             ));
+        }
 
-        let position_index = self.position_index();
+        let terminal_section = terminal_section.add(settings::item(
+            fl!("terminal-args"),
+            text_input(
+                fl!("terminal-args-placeholder"),
+                self.config.terminal_args.join(" "),
+            )
+            .on_input(Message::SetTerminalArgs),
+        ));
 
-        let appearance_section = settings::section()
-            .title(fl!("settings-appearance"))
-            .add(settings::item(
-                fl!("position"),
-                widget::dropdown(&self.position_names, Some(position_index), |i| {
-                    Message::SetPosition(i)
-                }),
-            ))
-            .add(settings::item(
-                fl!("height-percent", value = self.config.height_percent),
-                slider(
-                    10..=100,
-                    self.config.height_percent,
-                    Message::SetHeightPercent,
-                ),
-            ))
-            .add(settings::item(
-                fl!("width-percent", value = self.config.width_percent),
-                slider(
-                    10..=100,
-                    self.config.width_percent,
-                    Message::SetWidthPercent,
-                ),
-            ));
-
-        let content =
-            settings::view_column(vec![terminal_section.into(), appearance_section.into()])
-                .padding([0, 24]);
+        let content = settings::view_column(vec![terminal_section.into()]).padding([0, 24]);
 
         let header = header_bar()
             .title(fl!("settings-title"))
@@ -409,14 +361,7 @@ impl QuakeTerminal {
     fn terminal_index(&self) -> usize {
         KNOWN_TERMINALS
             .iter()
-            .position(|&t| t == self.config.terminal_command)
-            .unwrap_or(0)
-    }
-
-    fn position_index(&self) -> usize {
-        POSITION_OPTIONS
-            .iter()
-            .position(|p| *p == self.config.position)
+            .position(|&(cmd, _, _)| cmd == self.config.terminal_command)
             .unwrap_or(0)
     }
 
