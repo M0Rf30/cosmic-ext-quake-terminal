@@ -310,7 +310,8 @@ impl Application for QuakeTerminal {
             ));
 
         let content =
-            settings::view_column(vec![terminal_section.into(), appearance_section.into()]);
+            settings::view_column(vec![terminal_section.into(), appearance_section.into()])
+                .padding([0, 24]);
 
         let header = header_bar()
             .title(fl!("settings-title"))
