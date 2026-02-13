@@ -22,6 +22,7 @@ pub enum ToplevelEvent {
     Found,
     Minimized,
     Activated,
+    Deactivated,
     Closed,
 }
 
@@ -57,6 +58,7 @@ struct WaylandState {
     our_foreign_handle: Option<ExtForeignToplevelHandleV1>,
     event_tx: tokio_mpsc::UnboundedSender<ToplevelEvent>,
     last_minimized: Option<bool>,
+    last_activated: Option<bool>,
 }
 
 impl ProvidesRegistryState for WaylandState {
@@ -133,6 +135,7 @@ impl ToplevelInfoHandler for WaylandState {
                 self.our_handle = info.cosmic_toplevel.clone();
                 self.our_foreign_handle = Some(toplevel.clone());
                 self.last_minimized = None;
+                self.last_activated = None;
                 let _ = self.event_tx.send(ToplevelEvent::Found);
             }
         }
@@ -159,17 +162,24 @@ impl ToplevelInfoHandler for WaylandState {
             let is_minimized = info
                 .state
                 .contains(&zcosmic_toplevel_handle_v1::State::Minimized);
+            let is_activated = info
+                .state
+                .contains(&zcosmic_toplevel_handle_v1::State::Activated);
 
-            // Only emit events on actual state changes
+            // Emit events on actual state changes
             if self.last_minimized != Some(is_minimized) {
                 self.last_minimized = Some(is_minimized);
                 if is_minimized {
                     let _ = self.event_tx.send(ToplevelEvent::Minimized);
-                } else if info
-                    .state
-                    .contains(&zcosmic_toplevel_handle_v1::State::Activated)
-                {
+                }
+            }
+
+            if self.last_activated != Some(is_activated) {
+                self.last_activated = Some(is_activated);
+                if is_activated {
                     let _ = self.event_tx.send(ToplevelEvent::Activated);
+                } else {
+                    let _ = self.event_tx.send(ToplevelEvent::Deactivated);
                 }
             }
         }
@@ -190,6 +200,7 @@ impl ToplevelInfoHandler for WaylandState {
             self.our_handle = None;
             self.our_foreign_handle = None;
             self.last_minimized = None;
+            self.last_activated = None;
             let _ = self.event_tx.send(ToplevelEvent::Closed);
         }
     }
@@ -249,6 +260,7 @@ fn run_wayland_loop(
         our_foreign_handle: None,
         event_tx,
         last_minimized: None,
+        last_activated: None,
     };
 
     // Initial roundtrip to discover globals and existing toplevels

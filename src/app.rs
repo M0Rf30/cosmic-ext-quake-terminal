@@ -103,6 +103,8 @@ pub struct QuakeTerminal {
     config: QuakeConfig,
     config_handler: Option<cosmic_config::Config>,
     state: ToggleState,
+    focused: bool,
+    refocusing: bool,
     terminal_pid: Option<Arc<AtomicU32>>,
     terminal_app_id: String,
     wayland_controller: Option<WaylandController>,
@@ -131,6 +133,8 @@ impl Application for QuakeTerminal {
             config,
             config_handler,
             state: ToggleState::Idle,
+            focused: false,
+            refocusing: false,
             terminal_pid: None,
             terminal_app_id,
             wayland_controller: None,
@@ -384,11 +388,20 @@ impl QuakeTerminal {
                 tracing::debug!("Toggle: still waiting for window to appear");
             }
             ToggleState::Visible => {
-                tracing::info!("Toggle: hiding terminal");
-                if let Some(ref controller) = self.wayland_controller {
-                    controller.minimize();
+                if self.focused {
+                    tracing::info!("Toggle: hiding terminal");
+                    if let Some(ref controller) = self.wayland_controller {
+                        controller.minimize();
+                    }
+                    self.state = ToggleState::Hidden;
+                    self.focused = false;
+                } else {
+                    tracing::info!("Toggle: refocusing terminal (minimize first)");
+                    if let Some(ref controller) = self.wayland_controller {
+                        controller.minimize();
+                    }
+                    self.refocusing = true;
                 }
-                self.state = ToggleState::Hidden;
             }
             ToggleState::Hidden => {
                 tracing::info!("Toggle: showing terminal");
@@ -396,6 +409,7 @@ impl QuakeTerminal {
                     controller.activate();
                 }
                 self.state = ToggleState::Visible;
+                self.focused = true;
             }
         }
     }
@@ -410,21 +424,40 @@ impl QuakeTerminal {
                 tracing::info!("Terminal window found");
                 if self.state == ToggleState::WaitingForWindow {
                     self.state = ToggleState::Visible;
+                    self.focused = true;
                 }
             }
             ToplevelEvent::Minimized => {
                 if self.terminal_pid.is_some() {
-                    self.state = ToggleState::Hidden;
+                    if self.refocusing {
+                        // Compositor confirmed minimize — now activate to bring to front
+                        tracing::info!("Refocus: minimize confirmed, activating");
+                        self.refocusing = false;
+                        if let Some(ref controller) = self.wayland_controller {
+                            controller.activate();
+                        }
+                        self.focused = true;
+                    } else {
+                        self.state = ToggleState::Hidden;
+                        self.focused = false;
+                    }
                 }
             }
             ToplevelEvent::Activated => {
                 if self.terminal_pid.is_some() {
                     self.state = ToggleState::Visible;
+                    self.focused = true;
+                }
+            }
+            ToplevelEvent::Deactivated => {
+                if self.terminal_pid.is_some() {
+                    self.focused = false;
                 }
             }
             ToplevelEvent::Closed => {
                 tracing::info!("Terminal window closed by compositor");
                 self.state = ToggleState::Idle;
+                self.focused = false;
                 if let Some(pid) = self.terminal_pid.take() {
                     let raw = pid.load(Ordering::Relaxed) as i32;
                     let nix_pid = nix::unistd::Pid::from_raw(raw);

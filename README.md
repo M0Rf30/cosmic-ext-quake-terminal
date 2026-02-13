@@ -92,6 +92,38 @@ Add to `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom`:
 ): Spawn("cosmic-ext-quake-terminal toggle"),
 ```
 
+### Known issue: shortcut stops working after Alt-Tab
+
+There is a [known bug](https://github.com/pop-os/cosmic-epoch/issues/2481) in the COSMIC compositor where custom `Spawn` shortcuts may stop firing after using Alt-Tab. The [GlobalShortcuts portal](https://github.com/pop-os/xdg-desktop-portal-cosmic/issues/4) is not yet implemented in COSMIC, so the app cannot register its own global shortcut.
+
+**Workaround:** Use an evdev-based hotkey daemon that bypasses the compositor's shortcut system:
+
+#### swhkd (Simple Wayland HotKey Daemon)
+
+```sh
+# Install (AUR)
+paru -S swhkd
+
+# Create config
+mkdir -p ~/.config/swhkd
+cat > ~/.config/swhkd/swhkdrc << 'EOF'
+F12
+  cosmic-ext-quake-terminal toggle
+EOF
+
+# Run (swhks handles the unprivileged side, swhkd needs root for evdev)
+swhks &
+pkexec swhkd
+```
+
+#### Manual toggle
+
+If the shortcut stops responding, you can always toggle from any terminal:
+
+```sh
+cosmic-ext-quake-terminal toggle
+```
+
 ## Usage
 
 The daemon starts automatically via D-Bus activation when you first run the toggle command. You can also start it manually:
