@@ -6,8 +6,9 @@ use cosmic::app::{Core, Settings, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::event::{self, Event};
 use cosmic::iced::window;
+use cosmic::iced::Length;
 use cosmic::iced::Subscription;
-use cosmic::widget::{self, header_bar, scrollable, settings, slider, text, text_input};
+use cosmic::widget::{self, container, header_bar, scrollable, settings, slider, text, text_input};
 use cosmic::{Application, ApplicationExt, Element};
 use serde::{Deserialize, Serialize};
 
@@ -315,9 +316,10 @@ impl Application for QuakeTerminal {
             .title(fl!("settings-title"))
             .on_close(Message::CloseWindow(id));
 
-        widget::column()
-            .push(header)
-            .push(scrollable(content))
+        container(widget::column().push(header).push(scrollable(content)))
+            .class(cosmic::style::Container::Background)
+            .width(Length::Fill)
+            .height(Length::Fill)
             .into()
     }
 
