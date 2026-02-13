@@ -1,11 +1,10 @@
 [Desktop Entry]
 Name=COSMIC Quake Terminal
 Comment=Quake-style dropdown terminal for COSMIC Desktop
-Exec=cosmic-ext-quake-terminal
+Exec=cosmic-ext-quake-terminal settings
 Icon=com.github.m0rf30.CosmicExtQuakeTerminal
 Terminal=false
 Type=Application
 Categories=System;TerminalEmulator;
 Keywords=terminal;quake;dropdown;
 DBusActivatable=true
-NoDisplay=true

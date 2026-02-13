@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3a3a4a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect width="128" height="128" rx="20" ry="20" fill="url(#bg)"/>
+  <!-- Terminal window frame -->
+  <rect x="16" y="12" width="96" height="68" rx="8" ry="8" fill="#2d2d3d" stroke="#5c5c7a" stroke-width="1.5"/>
+  <!-- Title bar -->
+  <rect x="16" y="12" width="96" height="14" rx="8" ry="0" fill="#3d3d52"/>
+  <rect x="16" y="18" width="96" height="8" fill="#3d3d52"/>
+  <!-- Title bar dots -->
+  <circle cx="28" cy="19" r="2.5" fill="#ff6b6b"/>
+  <circle cx="37" cy="19" r="2.5" fill="#ffd93d"/>
+  <circle cx="46" cy="19" r="2.5" fill="#6bcb77"/>
+  <!-- Terminal prompt lines -->
+  <text x="24" y="42" font-family="monospace" font-size="9" fill="#6bcb77">$</text>
+  <rect x="33" y="35" width="48" height="2" rx="1" fill="#8888aa" opacity="0.6"/>
+  <text x="24" y="55" font-family="monospace" font-size="9" fill="#6bcb77">$</text>
+  <rect x="33" y="48" width="32" height="2" rx="1" fill="#8888aa" opacity="0.6"/>
+  <!-- Cursor -->
+  <rect x="33" y="58" width="7" height="10" rx="1" fill="#6bcb77" opacity="0.8"/>
+  <!-- Down arrow (dropdown/quake motion) -->
+  <polygon points="64,88 44,100 52,100 52,116 76,116 76,100 84,100" fill="#63b3ed" opacity="0.9"/>
+</svg>
