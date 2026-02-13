@@ -1,15 +1,11 @@
-rootdir := ''
-prefix := '/usr'
+appid := env_var('APPID')
+install-dir := env_var('INSTALL_DIR')
 
-base-dir := absolute_path(clean(rootdir / prefix))
+desktop-src := appid + '.desktop'
+desktop-dst := install-dir / 'applications' / desktop-src
 
-desktop := APPID + '.desktop'
-desktop-src := APPID + '.desktop'
-desktop-dst := clean(rootdir / prefix) / 'share' / 'applications' / desktop
-
-icon := APPID + '.svg'
-icon-src := 'icons' / icon
-icon-dst := clean(rootdir / prefix) / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon
+icon-src := 'icons' / appid + '.svg'
+icon-dst := install-dir / 'icons' / 'hicolor' / 'scalable' / 'apps' / appid + '.svg'
 
 install:
     install -Dm0644 {{desktop-src}} {{desktop-dst}}
