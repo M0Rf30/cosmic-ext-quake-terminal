@@ -1,6 +1,6 @@
 [package]
 name = "cosmic-ext-quake-terminal"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Quake-style dropdown terminal for COSMIC Desktop"
@@ -24,7 +24,7 @@ libcosmic = { git = "https://github.com/pop-os/libcosmic", rev = "689f25b", defa
     "wayland",
     "single-instance",
 ] }
-nix = { version = "0.29", features = ["signal", "process", "poll"] }
+nix = { version = "0.30", features = ["signal", "process", "poll"] }
 once_cell = "1"
 rust-embed = "8"
 serde = { version = "1", features = ["derive"] }

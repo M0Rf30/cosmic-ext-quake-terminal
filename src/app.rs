@@ -109,6 +109,7 @@ pub struct QuakeTerminal {
     terminal_app_id: String,
     wayland_controller: Option<WaylandController>,
     settings_window_id: Option<window::Id>,
+    waiting_since: Option<std::time::Instant>,
 }
 
 impl Application for QuakeTerminal {
@@ -139,6 +140,7 @@ impl Application for QuakeTerminal {
             terminal_app_id,
             wayland_controller: None,
             settings_window_id: None,
+            waiting_since: None,
         };
 
         // Dispatch the initial action from CLI flags (first-instance case)
@@ -178,8 +180,16 @@ impl Application for QuakeTerminal {
                 }
             }
             Message::ConfigChanged(config) => {
-                tracing::info!("Config changed");
-                self.terminal_app_id = process::get_app_id(&config.terminal_command);
+                let new_app_id = process::get_app_id(&config.terminal_command);
+                if new_app_id != self.terminal_app_id {
+                    tracing::info!("Config changed: terminal app_id -> {new_app_id}");
+                    self.terminal_app_id = new_app_id;
+                    if let Some(controller) = &self.wayland_controller {
+                        controller.set_target(self.terminal_app_id.clone());
+                    }
+                } else {
+                    tracing::info!("Config changed");
+                }
                 self.config = config;
             }
             Message::OpenSettings => {
@@ -371,33 +381,29 @@ impl QuakeTerminal {
 
     fn handle_toggle(&mut self) {
         match self.state {
-            ToggleState::Idle => {
-                tracing::info!("Toggle: spawning terminal");
-                let result = process::spawn_terminal(
-                    &self.config.terminal_command,
-                    &self.config.terminal_args,
-                );
-                if let Some(result) = result {
-                    let pid = result.pid;
-                    self.terminal_pid = Some(Arc::new(AtomicU32::new(pid)));
-                    self.terminal_app_id = result.app_id;
-                    self.state = ToggleState::WaitingForWindow;
-                }
-            }
+            ToggleState::Idle => self.spawn_terminal(),
             ToggleState::WaitingForWindow => {
-                tracing::debug!("Toggle: still waiting for window to appear");
+                let stalled = self
+                    .waiting_since
+                    .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3));
+                if stalled {
+                    tracing::warn!("Toggle: window never appeared, respawning terminal");
+                    self.spawn_terminal();
+                } else {
+                    tracing::debug!("Toggle: still waiting for window to appear");
+                }
             }
             ToggleState::Visible => {
                 if self.focused {
                     tracing::info!("Toggle: hiding terminal");
-                    if let Some(ref controller) = self.wayland_controller {
+                    if let Some(controller) = &self.wayland_controller {
                         controller.minimize();
                     }
                     self.state = ToggleState::Hidden;
                     self.focused = false;
                 } else {
                     tracing::info!("Toggle: refocusing terminal (minimize first)");
-                    if let Some(ref controller) = self.wayland_controller {
+                    if let Some(controller) = &self.wayland_controller {
                         controller.minimize();
                     }
                     self.refocusing = true;
@@ -405,7 +411,7 @@ impl QuakeTerminal {
             }
             ToggleState::Hidden => {
                 tracing::info!("Toggle: showing terminal");
-                if let Some(ref controller) = self.wayland_controller {
+                if let Some(controller) = &self.wayland_controller {
                     controller.activate();
                 }
                 self.state = ToggleState::Visible;
@@ -414,43 +420,83 @@ impl QuakeTerminal {
         }
     }
 
+    /// SIGTERM and reap the tracked terminal process, if any.
+    fn kill_terminal(&mut self) {
+        if let Some(pid) = self.terminal_pid.take() {
+            let raw = pid.load(Ordering::Relaxed) as i32;
+            let nix_pid = nix::unistd::Pid::from_raw(raw);
+            let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
+            let _ = nix::sys::wait::waitpid(nix_pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG));
+        }
+    }
+
+    fn spawn_terminal(&mut self) {
+        // Kill any previous process first (e.g. a stalled spawn that never
+        // produced a window) so we never orphan it.
+        self.kill_terminal();
+        tracing::info!("Toggle: spawning terminal");
+        let Some(result) =
+            process::spawn_terminal(&self.config.terminal_command, &self.config.terminal_args)
+        else {
+            return;
+        };
+        self.terminal_pid = Some(Arc::new(AtomicU32::new(result.pid)));
+        self.terminal_app_id = result.app_id.clone();
+        self.state = ToggleState::WaitingForWindow;
+        self.waiting_since = Some(std::time::Instant::now());
+        self.refocusing = false;
+        // Ensure the wayland loop tracks the app_id we just launched.
+        if let Some(controller) = &self.wayland_controller {
+            controller.set_target(result.app_id);
+        }
+    }
+
     fn handle_toplevel_event(&mut self, event: ToplevelEvent) {
         match event {
             ToplevelEvent::Ready(controller) => {
                 tracing::info!("Wayland toplevel controller ready");
+                // Sync the freshly-started loop to the current target app_id.
+                controller.set_target(self.terminal_app_id.clone());
                 self.wayland_controller = Some(controller);
             }
             ToplevelEvent::Found => {
                 tracing::info!("Terminal window found");
+                self.waiting_since = None;
                 if self.state == ToggleState::WaitingForWindow {
                     self.state = ToggleState::Visible;
                     self.focused = true;
                 }
             }
+            // Window-state events are only emitted by the wayland loop for the
+            // window we track, so drive state directly off them — never gate on
+            // the spawn PID, which dies early for terminals that fork.
             ToplevelEvent::Minimized => {
-                if self.terminal_pid.is_some() {
-                    if self.refocusing {
-                        // Compositor confirmed minimize — now activate to bring to front
-                        tracing::info!("Refocus: minimize confirmed, activating");
-                        self.refocusing = false;
-                        if let Some(ref controller) = self.wayland_controller {
-                            controller.activate();
-                        }
-                        self.focused = true;
-                    } else {
-                        self.state = ToggleState::Hidden;
-                        self.focused = false;
+                if self.state == ToggleState::Idle {
+                    return;
+                }
+                if self.refocusing {
+                    // Compositor confirmed minimize — now activate to raise it.
+                    tracing::info!("Refocus: minimize confirmed, activating");
+                    self.refocusing = false;
+                    if let Some(controller) = &self.wayland_controller {
+                        controller.activate();
                     }
+                    self.focused = true;
+                } else {
+                    self.state = ToggleState::Hidden;
+                    self.focused = false;
                 }
             }
             ToplevelEvent::Activated => {
-                if self.terminal_pid.is_some() {
+                tracing::debug!("Toplevel activated (state={:?})", self.state);
+                if self.state != ToggleState::Idle {
                     self.state = ToggleState::Visible;
                     self.focused = true;
                 }
             }
             ToplevelEvent::Deactivated => {
-                if self.terminal_pid.is_some() {
+                tracing::debug!("Toplevel deactivated (state={:?})", self.state);
+                if self.state != ToggleState::Idle {
                     self.focused = false;
                 }
             }
@@ -458,15 +504,9 @@ impl QuakeTerminal {
                 tracing::info!("Terminal window closed by compositor");
                 self.state = ToggleState::Idle;
                 self.focused = false;
-                if let Some(pid) = self.terminal_pid.take() {
-                    let raw = pid.load(Ordering::Relaxed) as i32;
-                    let nix_pid = nix::unistd::Pid::from_raw(raw);
-                    let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
-                    let _ = nix::sys::wait::waitpid(
-                        nix_pid,
-                        Some(nix::sys::wait::WaitPidFlag::WNOHANG),
-                    );
-                }
+                self.refocusing = false;
+                self.waiting_since = None;
+                self.kill_terminal();
             }
         }
     }

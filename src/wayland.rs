@@ -30,6 +30,8 @@ pub enum ToplevelEvent {
 pub enum WaylandCommand {
     Minimize,
     Activate,
+    /// Re-point the loop at a new terminal app_id (e.g. after a config change).
+    SetTarget(String),
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +46,10 @@ impl WaylandController {
 
     pub fn activate(&self) {
         let _ = self.cmd_tx.send(WaylandCommand::Activate);
+    }
+
+    pub fn set_target(&self, app_id: String) {
+        let _ = self.cmd_tx.send(WaylandCommand::SetTarget(app_id));
     }
 }
 
@@ -118,6 +124,66 @@ impl SeatHandler for WaylandState {
     fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: WlSeat) {}
 }
 
+impl WaylandState {
+    /// If we aren't tracking a window yet and `toplevel` matches our target
+    /// app_id, adopt it and emit `Found` plus an initial state burst.
+    fn try_adopt(&mut self, toplevel: &ExtForeignToplevelHandleV1) -> bool {
+        if self.our_foreign_handle.is_some() {
+            return false;
+        }
+        let adopt = self.toplevel_info.info(toplevel).and_then(|info| {
+            (info.app_id == self.target_app_id).then(|| {
+                (
+                    info.cosmic_toplevel.clone(),
+                    info.foreign_toplevel.clone(),
+                    info.state
+                        .contains(&zcosmic_toplevel_handle_v1::State::Minimized),
+                    info.state
+                        .contains(&zcosmic_toplevel_handle_v1::State::Activated),
+                )
+            })
+        });
+        let Some((cosmic, foreign, is_minimized, is_activated)) = adopt else {
+            return false;
+        };
+        tracing::info!("Found our toplevel: app_id={}", self.target_app_id);
+        self.our_handle = cosmic;
+        self.our_foreign_handle = Some(foreign);
+        self.last_minimized = Some(is_minimized);
+        self.last_activated = Some(is_activated);
+        let _ = self.event_tx.send(ToplevelEvent::Found);
+        if is_minimized {
+            let _ = self.event_tx.send(ToplevelEvent::Minimized);
+        }
+        if !is_activated {
+            let _ = self.event_tx.send(ToplevelEvent::Deactivated);
+        }
+        true
+    }
+
+    /// Re-point tracking at a new terminal app_id, dropping any current handle
+    /// and adopting a matching window if one already exists.
+    fn retarget(&mut self, app_id: String) {
+        if self.target_app_id == app_id {
+            return;
+        }
+        tracing::info!("Retargeting toplevel tracking to app_id={app_id}");
+        self.target_app_id = app_id;
+        self.our_handle = None;
+        self.our_foreign_handle = None;
+        self.last_minimized = None;
+        self.last_activated = None;
+        let existing = self
+            .toplevel_info
+            .toplevels()
+            .find(|info| info.app_id == self.target_app_id)
+            .map(|info| info.foreign_toplevel.clone());
+        if let Some(toplevel) = existing {
+            self.try_adopt(&toplevel);
+        }
+    }
+}
+
 impl ToplevelInfoHandler for WaylandState {
     fn toplevel_info_state(&mut self) -> &mut ToplevelInfoState {
         &mut self.toplevel_info
@@ -129,16 +195,7 @@ impl ToplevelInfoHandler for WaylandState {
         _qh: &QueueHandle<Self>,
         toplevel: &ExtForeignToplevelHandleV1,
     ) {
-        if let Some(info) = self.toplevel_info.info(toplevel) {
-            if info.app_id == self.target_app_id {
-                tracing::info!("Found our toplevel: app_id={}", info.app_id);
-                self.our_handle = info.cosmic_toplevel.clone();
-                self.our_foreign_handle = Some(toplevel.clone());
-                self.last_minimized = None;
-                self.last_activated = None;
-                let _ = self.event_tx.send(ToplevelEvent::Found);
-            }
-        }
+        self.try_adopt(toplevel);
     }
 
     fn update_toplevel(
@@ -147,12 +204,15 @@ impl ToplevelInfoHandler for WaylandState {
         _qh: &QueueHandle<Self>,
         toplevel: &ExtForeignToplevelHandleV1,
     ) {
-        // Only track updates for the specific window we're managing
+        // Only track updates for the specific window we're managing.
         let is_our_window = self
             .our_foreign_handle
             .as_ref()
             .is_some_and(|h| h == toplevel);
         if !is_our_window {
+            // The window may set its app_id after mapping, or have existed
+            // before we began tracking — attempt a belated adoption.
+            self.try_adopt(toplevel);
             return;
         }
 
@@ -269,7 +329,7 @@ fn run_wayland_loop(
     loop {
         // Process commands from the app
         while let Ok(cmd) = cmd_rx.try_recv() {
-            handle_command_inner(&state, cmd);
+            handle_command_inner(&mut state, cmd);
             let _ = conn.flush();
         }
 
@@ -293,12 +353,16 @@ fn run_wayland_loop(
     }
 }
 
-fn handle_command_inner(state: &WaylandState, cmd: WaylandCommand) {
-    let Some(ref handle) = state.our_handle else {
+fn handle_command_inner(state: &mut WaylandState, cmd: WaylandCommand) {
+    if let WaylandCommand::SetTarget(app_id) = cmd {
+        state.retarget(app_id);
+        return;
+    }
+    let Some(handle) = &state.our_handle else {
         tracing::warn!("No toplevel handle, cannot execute command: {cmd:?}");
         return;
     };
-    let Some(ref manager_state) = state.toplevel_manager else {
+    let Some(manager_state) = &state.toplevel_manager else {
         tracing::warn!("No toplevel manager available");
         return;
     };
@@ -311,10 +375,11 @@ fn handle_command_inner(state: &WaylandState, cmd: WaylandCommand) {
         }
         WaylandCommand::Activate => {
             manager.unset_minimized(handle);
-            if let Some(ref seat) = state.seat {
+            if let Some(seat) = &state.seat {
                 manager.activate(handle, seat);
             }
         }
+        WaylandCommand::SetTarget(_) => unreachable!("handled above"),
     }
 }
 
