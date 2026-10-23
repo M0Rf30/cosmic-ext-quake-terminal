@@ -1,4 +1,6 @@
 /target
+result
+result-*
 .cargo/
 vendor/
 vendor.tar
