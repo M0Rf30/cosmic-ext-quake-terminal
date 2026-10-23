@@ -30,6 +30,60 @@ just build-release
 sudo just install
 ```
 
+### Nix / NixOS
+
+The repo is a flake that provides a package, an overlay, a dev shell and a Home Manager module.
+
+```sh
+nix build            # build
+nix run . -- toggle  # run the toggle command
+nix develop          # dev shell with cargo, clippy, just, ...
+```
+
+Declarative setup (terminal and keybind included) with Home Manager:
+
+```nix
+# flake.nix
+inputs.cosmic-ext-quake-terminal.url = "github:m0rf30/cosmic-ext-quake-terminal";
+# (no nixpkgs.follows, so the prebuilt binary from the cache can be used)
+
+# home-manager module list
+imports = [ inputs.cosmic-ext-quake-terminal.homeManagerModules.default ];
+
+programs.cosmic-ext-quake-terminal = {
+  enable = true;
+  terminal.package = pkgs.ghostty;   # or: terminal.command = "kitty";
+  # terminal.args = [ "--some-flag" ];
+  keybind = {
+    modifiers = [ "Super" ];
+    key = "grave";
+  };
+};
+```
+
+Notes:
+
+- **Binary cache:** CI pushes builds to Cachix. To skip compiling, add the cache to
+  your own Nix config (flake `nixConfig` of the *top-level* flake, or `nix.settings`):
+  ```nix
+  nix.settings = {
+    substituters = [ "https://jasper-cosmic-ext-quake-terminal.cachix.org" ];
+    trusted-public-keys = [
+      "jasper-cosmic-ext-quake-terminal.cachix.org-1:lq7WSGMrMXH2VQc8tF94A23NABfRFeTXbz4vX5G+/2E="
+    ];
+  };
+  ```
+  The cache only hits if the package is built with the same nixpkgs as this flake's
+  `flake.lock`, so leave out `inputs.nixpkgs.follows` for this input if you want
+  prebuilt binaries.
+
+- `keybind` / `extraShortcuts` make the module own COSMIC's custom shortcuts file
+  (`com.system76.CosmicSettings.Shortcuts/v1/custom`). Declare any other custom
+  shortcuts through `extraShortcuts` (raw RON entries).
+- Values managed by Nix are read-only symlinks, so the in-app settings window and
+  COSMIC Settings can't change them. Delete any pre-existing hand-written files at
+  those paths before the first activation.
+
 ### Uninstall
 
 ```sh
