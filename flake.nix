@@ -1,6 +1,13 @@
 {
   description = "Quake-style dropdown terminal for COSMIC Desktop";
 
+  nixConfig = {
+    extra-substituters = [ "https://jasper-cosmic-ext-quake-terminal.cachix.org" ];
+    extra-trusted-public-keys = [
+      "jasper-cosmic-ext-quake-terminal.cachix.org-1:lq7WSGMrMXH2VQc8tF94A23NABfRFeTXbz4vX5G+/2E="
+    ];
+  };
+
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
   outputs =

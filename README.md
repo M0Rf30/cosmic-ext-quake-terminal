@@ -44,10 +44,8 @@ Declarative setup (terminal and keybind included) with Home Manager:
 
 ```nix
 # flake.nix
-inputs.cosmic-ext-quake-terminal = {
-  url = "github:m0rf30/cosmic-ext-quake-terminal";
-  inputs.nixpkgs.follows = "nixpkgs";
-};
+inputs.cosmic-ext-quake-terminal.url = "github:m0rf30/cosmic-ext-quake-terminal";
+# (no nixpkgs.follows, so the prebuilt binary from the cache can be used)
 
 # home-manager module list
 imports = [ inputs.cosmic-ext-quake-terminal.homeManagerModules.default ];
@@ -64,6 +62,20 @@ programs.cosmic-ext-quake-terminal = {
 ```
 
 Notes:
+
+- **Binary cache:** CI pushes builds to Cachix. To skip compiling, add the cache to
+  your own Nix config (flake `nixConfig` of the *top-level* flake, or `nix.settings`):
+  ```nix
+  nix.settings = {
+    substituters = [ "https://jasper-cosmic-ext-quake-terminal.cachix.org" ];
+    trusted-public-keys = [
+      "jasper-cosmic-ext-quake-terminal.cachix.org-1:lq7WSGMrMXH2VQc8tF94A23NABfRFeTXbz4vX5G+/2E="
+    ];
+  };
+  ```
+  The cache only hits if the package is built with the same nixpkgs as this flake's
+  `flake.lock`, so leave out `inputs.nixpkgs.follows` for this input if you want
+  prebuilt binaries.
 
 - `keybind` / `extraShortcuts` make the module own COSMIC's custom shortcuts file
   (`com.system76.CosmicSettings.Shortcuts/v1/custom`). Declare any other custom
